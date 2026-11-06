@@ -73,7 +73,6 @@ class BisulphiteRequest:
     settings: BisulphiteSettings = field(default_factory=BisulphiteSettings)
     conditions: Conditions = field(default_factory=Conditions)
     search: Search = Search.FIXED
-    cpg: CpGSettings = field(default_factory=CpGSettings)
 
 
 @dataclass(frozen=True)
@@ -238,14 +237,7 @@ def pcr() -> Response:
 def bisulphite() -> Response:
     req = build(BisulphiteRequest, _payload())
     seq = _sequence(req.sequence)
-    result = design_bisulphite(
-        seq,
-        req.target,
-        req.settings,
-        req.conditions,
-        req.search,
-        cpg=lambda s: find_cpg_islands(s, req.cpg),
-    )
+    result = design_bisulphite(seq, req.target, req.settings, req.conditions, req.search)
     return _design_response(result)
 
 

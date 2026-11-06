@@ -17,6 +17,7 @@ from pyprimer.design import (
     SequencingSettings,
     TargetRange,
     _degenerate_bisulphite,
+    default_target,
     design_bisulphite,
     design_pcr,
     design_qpcr,
@@ -95,28 +96,44 @@ class TestRepeatFilter:
 
 
 class TestPCR:
-    def test_designs_pairs_around_orf(self, orf_seq: str) -> None:
-        result = design_pcr(orf_seq, search=Search.OUTWARDS)
-        orf = find_orf(orf_seq)
-        assert orf and result.pairs
-        assert result.target.inner_start == orf.start
+    def test_default_target_is_first_and_last_quarter(self, orf_seq: str) -> None:
+        result = design_pcr(orf_seq)
+        length = len(orf_seq)
+        assert result.target == default_target(length)
+        assert result.pairs
         for pair in result.pairs:
             assert pair.forward == orf_seq[pair.forward_pos : pair.forward_pos + pair.forward_len]
             rev_start = pair.reverse_end - pair.reverse_len + 1
             assert pair.reverse == reverse_complement(orf_seq[rev_start : pair.reverse_end + 1])
-            assert pair.forward_pos < orf.start and pair.reverse_end > orf.end - 1
+            assert pair.forward_pos < length // 4
+            assert pair.reverse_end > length - length // 4 - 1
             assert 57 < pair.forward_tm < 63 and 57 < pair.reverse_tm < 63
-            assert abs(pair.forward_tm - pair.reverse_tm) < 3
+            assert abs(pair.forward_tm - pair.reverse_tm) <= 3.01  # Tm values are rounded
             assert pair.amplicon == pair.reverse_end - pair.forward_pos
 
+    def test_default_regions_capped_at_300_bp(self) -> None:
+        assert default_target(1000) == TargetRange(0, 250, 749, 1000)
+        assert default_target(1200) == TargetRange(0, 300, 899, 1200)
+        assert default_target(10_000) == TargetRange(0, 300, 9699, 10_000)
+
+    def test_unset_fields_take_defaults(self, orf_seq: str) -> None:
+        result = design_pcr(orf_seq, TargetRange(inner_start=100))
+        default = default_target(len(orf_seq))
+        assert result.target == TargetRange(0, 100, default.inner_end, default.outer_end)
+
     def test_pairs_sorted_by_least_stable_dimer(self, orf_seq: str) -> None:
-        pairs = design_pcr(orf_seq, search=Search.OUTWARDS).pairs
+        pairs = design_pcr(orf_seq).pairs
         dgs = [p.dimer_dg for p in pairs]
         assert dgs == sorted(dgs, reverse=True)
 
-    def test_fixed_search_with_equal_ranges_finds_nothing(self, orf_seq: str) -> None:
-        result = design_pcr(orf_seq, search=Search.FIXED)
-        assert result.pairs == []
+    def test_equal_ranges_need_a_search(self, orf_seq: str) -> None:
+        orf = find_orf(orf_seq)
+        assert orf
+        target = TargetRange(orf.start, orf.start, orf.end - 1, orf.end - 1)
+        assert design_pcr(orf_seq, target, search=Search.FIXED).pairs == []
+        result = design_pcr(orf_seq, target, search=Search.OUTWARDS)
+        assert result.pairs
+        assert result.target.outer_start is not None and result.target.outer_start < orf.start
 
     def test_explicit_target(self, orf_seq: str) -> None:
         target = TargetRange(150, 250, 700, 800)
@@ -127,10 +144,6 @@ class TestPCR:
     def test_invalid_target(self, orf_seq: str) -> None:
         with pytest.raises(DesignError):
             design_pcr(orf_seq, TargetRange(300, 200, 700, 800))
-
-    def test_no_orf_and_no_target(self) -> None:
-        with pytest.raises(DesignError):
-            design_pcr("TAA" * 100)
 
     def test_empty_sequence(self) -> None:
         with pytest.raises(DesignError):
@@ -171,9 +184,9 @@ class TestBisulphite:
         # appears as GC; the primer base opposite that C becomes R.
         assert _degenerate_bisulphite("AACAACAA", "TTGCTGCT", reverse=True) == "AACRACRA"
 
-    def test_uses_cpg_island_by_default(self, bisulphite_seq: str) -> None:
-        result = design_bisulphite(bisulphite_seq, search=Search.OUTWARDS)
-        assert result.target.inner_start is not None
+    def test_uses_default_target(self, bisulphite_seq: str) -> None:
+        result = design_bisulphite(bisulphite_seq)
+        assert result.target == default_target(len(bisulphite_seq))
 
 
 class TestQPCR:

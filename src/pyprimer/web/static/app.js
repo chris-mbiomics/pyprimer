@@ -239,7 +239,6 @@
       const t = values.target;
       const anySet = Object.values(t).some((v) => v !== null);
       Object.assign(req, { sequence: values.sequence, target: anySet ? t : null, search: values.search });
-      if (mode === "bisulphite") req.cpg = prefs.cpg;
     }
     return req;
   }

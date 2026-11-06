@@ -63,9 +63,15 @@ def test_features(client: FlaskClient, seq: str) -> None:
 
 
 def test_design_pcr_and_details(client: FlaskClient, seq: str) -> None:
-    status, data = post(client, "/design/pcr", {"sequence": seq, "search": "outwards"})
+    status, data = post(client, "/design/pcr", {"sequence": seq})
     assert status == 200, data
-    assert data["total"] == len(data["pairs"]) > 0
+    assert data["total"] >= len(data["pairs"]) > 0
+    assert data["target"] == {
+        "outer_start": 0,
+        "inner_start": len(seq) // 4,
+        "inner_end": len(seq) - len(seq) // 4 - 1,
+        "outer_end": len(seq),
+    }
     pair = data["pairs"][0]
 
     status, details = post(
@@ -92,7 +98,7 @@ def test_design_pcr_and_details(client: FlaskClient, seq: str) -> None:
 
 def test_design_pcr_truncates(app: Flask, seq: str) -> None:
     app.config["MAX_PAIRS"] = 2
-    status, data = post(app.test_client(), "/design/pcr", {"sequence": seq, "search": "outwards"})
+    status, data = post(app.test_client(), "/design/pcr", {"sequence": seq})
     assert status == 200
     assert len(data["pairs"]) == 2 and data["truncated"]
 

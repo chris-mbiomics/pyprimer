@@ -45,10 +45,10 @@
     </div>
   </div>
 {%- endmacro %}
-{% macro target_fields(feature_label) -%}
+{% macro target_fields() -%}
   <fieldset class="card">
     <legend>Target range</legend>
-    <p class="help">Forward primers start between the outer and inner 5′ positions; reverse primers end between the inner and outer 3′ positions. Leave blank to use the {{ feature_label }}.</p>
+    <p class="help">Forward primers start between the outer and inner 5′ positions; reverse primers end between the inner and outer 3′ positions. Blank fields default to the first and last quarter of the sequence, at most 300 bp each.</p>
     <div class="grid four">
       {{ num("target.outer_start", "Outer 5′", "1", 0) }}
       {{ num("target.inner_start", "Inner 5′", "1", 0) }}
@@ -105,7 +105,7 @@
   <section class="panel" id="tab-pcr" data-mode="pcr" role="tabpanel">
     <form class="inputs" novalidate>
       {{ sequence_box("sequence", "DNA sequence", feature="orf") }}
-      {{ target_fields("longest ORF") }}
+      {{ target_fields() }}
       <fieldset class="card">
         <legend>Primers</legend>
         {{ tm_fields() }}
@@ -123,7 +123,7 @@
   <section class="panel" id="tab-bisulphite" data-mode="bisulphite" role="tabpanel" hidden>
     <form class="inputs" novalidate>
       {{ sequence_box("sequence", "Genomic DNA sequence (unconverted)", feature="cpg") }}
-      {{ target_fields("predicted CpG island(s)") }}
+      {{ target_fields() }}
       <fieldset class="card">
         <legend>Primers</legend>
         {{ tm_fields() }}

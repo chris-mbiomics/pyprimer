@@ -19,7 +19,8 @@ from .sequence import is_degenerate, reverse_complement
 from .thermo import DEFAULT_CONDITIONS, Conditions, free_energy_table
 
 _UNSTABLE_SINGLE_MATCH = re.compile(r"01(?=[^1])")
-_BASES = "acgt"
+# XOR of two aligned byte strings is 0 where the bases match.
+_MATCH_TABLE = bytes(ord("1") if i == 0 else ord("0") for i in range(256))
 
 
 @dataclass(frozen=True)
@@ -106,13 +107,14 @@ def _primer_dimer(
     pl = max(pfl, prl)
 
     rprimer_r = primer_r[::-1]
-    rcomp_r = reverse_complement(primer_r).lower()
-    f_reversed = primer_f[::-1].lower()
+    # At offset k, base j of primer_r (read 3'->5') faces base pfl-1-k+j of
+    # primer_f; they pair exactly when that base equals rcomp_r[j].
+    rcomp_r = reverse_complement(primer_r)
+    f_bytes, r_bytes = primer_f.encode(), rcomp_r.encode()
 
-    # Binding rows: for each base of primer_r, which positions of the reversed
-    # primer_f it would pair with.
-    rows = {base: [int(b == base) for b in f_reversed] for base in _BASES}
-    matrix = [rows[base] for base in rcomp_r]
+    def pairs(j: int, i: int) -> bool:
+        """Binding matrix entry: base j of rcomp_r vs base i of reversed primer_f."""
+        return primer_f[pfl - 1 - i] == rcomp_r[j]
 
     scores: list[float] = []
     best: dict[float, tuple[int, str]] = {}
@@ -123,19 +125,22 @@ def _primer_dimer(
         if extensible_only and not full:
             start = min(k, pfl - 1)
             end = min(k, prl - 1)
-            if matrix[0][start] != 1:
+            if not pairs(0, start):
                 continue
-            col = start - k  # <= 0: counts from the end of the row
-            if -col > pfl or matrix[end][col] != 1:
+            col = start - k  # <= 0: PerlPrimer indexes from the end of the row
+            if -col > pfl or not pairs(end, col % pfl):
                 continue
 
-        chars = []
-        for j in range(prl):
-            if k - j >= pfl:
-                chars.append("2")  # overhang
-            elif k - j >= 0:
-                chars.append(str(matrix[j][k - j]))
-        binding = _UNSTABLE_SINGLE_MATCH.sub("00", "".join(chars))
+        # Leading overhang ("2"), then match/mismatch bits for the aligned bases.
+        overhang = max(0, min(prl, k - pfl + 1))
+        last = min(k, prl - 1)
+        bits = ""
+        if last >= overhang:
+            a = f_bytes[pfl - 1 - k + overhang : pfl - k + last]
+            b = r_bytes[overhang : last + 1]
+            diff = int.from_bytes(a, "big") ^ int.from_bytes(b, "big")
+            bits = diff.to_bytes(len(a), "big").translate(_MATCH_TABLE).decode("ascii")
+        binding = _UNSTABLE_SINGLE_MATCH.sub("00", "2" * overhang + bits)
 
         if "1" not in binding:
             continue

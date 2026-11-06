@@ -19,7 +19,6 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from .dimer import primer_dimer
-from .features import Region, find_cpg_islands, find_orf
 from .sequence import (
     bisulphite_convert,
     c_percent,
@@ -33,6 +32,9 @@ from .thermo import DEFAULT_CONDITIONS, Conditions, melting_temperature
 
 #: How far each automatic search step moves the range (bp).
 SEARCH_STEP = 10
+
+#: Maximum length (bp) of each default primer region (see :func:`default_target`).
+DEFAULT_REGION = 300
 
 
 class DesignError(ValueError):
@@ -548,25 +550,28 @@ def _qpcr_ok(
 # --------------------------------------------------------------------------
 
 
-def _resolve_target(
-    seq: str, target: TargetRange | None, find_region: Callable[[str], list[Region]]
-) -> TargetRange:
-    """Fill in a target range, defaulting to a detected feature (ORF/island)."""
-    if target is None or not target.is_set:
-        regions = find_region(seq)
-        if not regions:
-            raise DesignError("No target range given and no suitable feature was found")
-        start, end = regions[0].start, regions[-1].end - 1
-        outer_start = target.outer_start if target and target.outer_start else start
-        outer_end = target.outer_end if target and target.outer_end else end
-        target = TargetRange(min(outer_start, start), start, end, max(outer_end, end))
-    inner_start, inner_end = target.inner_start, target.inner_end
-    if inner_start is None or inner_end is None:
-        raise DesignError("Both ends of the inner target range are required")
-    outer_start = inner_start if target.outer_start is None else target.outer_start
-    outer_end = inner_end if target.outer_end is None else target.outer_end
+def default_target(length: int) -> TargetRange:
+    """Primer regions at each end: a quarter of the sequence, at most DEFAULT_REGION bp."""
+    region = min(length // 4, DEFAULT_REGION)
+    return TargetRange(0, region, length - region - 1, length)
 
+
+def _resolve_target(seq: str, target: TargetRange | None) -> TargetRange:
+    """Fill unset fields of a target range from :func:`default_target` and validate it."""
     length = len(seq)
+    default = default_target(length)
+    target = target or default
+    outer_start, inner_start, inner_end, outer_end = (
+        fallback if value is None else value
+        for value, fallback in (
+            (target.outer_start, default.outer_start),
+            (target.inner_start, default.inner_start),
+            (target.inner_end, default.inner_end),
+            (target.outer_end, default.outer_end),
+        )
+    )
+    assert outer_start is not None and inner_start is not None
+    assert inner_end is not None and outer_end is not None
     if not 0 <= outer_start <= inner_start < inner_end <= outer_end <= length:
         raise DesignError(
             "Target range must satisfy 0 <= outer start <= inner start < inner end "
@@ -628,11 +633,13 @@ def design_pcr(
 ) -> DesignResult:
     """Design primer pairs for standard PCR.
 
-    If no inner range is given, the longest ORF is used as the target.
+    Unset target fields default to :func:`default_target`: forward primers in
+    the first quarter of the sequence and reverse primers in the last quarter,
+    each region at most 300 bp.
     """
     settings = settings or PCRSettings()
     seq = _prepare(sequence)
-    target = _resolve_target(seq, target, _orf_regions)
+    target = _resolve_target(seq, target)
 
     def run(t: TargetRange) -> list[PrimerPair]:
         w = _amplicon_window(t, settings.min_length, settings.max_length)
@@ -650,16 +657,15 @@ def design_bisulphite(
     settings: BisulphiteSettings | None = None,
     conditions: Conditions = DEFAULT_CONDITIONS,
     search: Search = Search.FIXED,
-    cpg: Callable[[str], list[Region]] = find_cpg_islands,
 ) -> DesignResult:
     """Design primer pairs for bisulphite-converted DNA.
 
-    Primers are designed against the converted top strand. If no inner range
-    is given, the predicted CpG island(s) are used as the target.
+    Primers are designed against the converted top strand. Unset target
+    fields default to :func:`default_target`.
     """
     settings = settings or BisulphiteSettings()
     seq = _prepare(sequence)
-    target = _resolve_target(seq, target, cpg)
+    target = _resolve_target(seq, target)
 
     def run(t: TargetRange) -> list[PrimerPair]:
         w = _amplicon_window(t, settings.min_length, settings.max_length)
@@ -757,11 +763,6 @@ def design_sequencing(
 
     messages.append(f"Found {len(primers)} primers")
     return SequencingResult(primers, target, seq, messages)
-
-
-def _orf_regions(seq: str) -> list[Region]:
-    orf = find_orf(seq)
-    return [orf] if orf else []
 
 
 def _found_message(pairs: list[PrimerPair]) -> list[str]:

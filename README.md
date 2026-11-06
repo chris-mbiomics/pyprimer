@@ -15,9 +15,10 @@ produce identical results to the original (see [Testing](#testing)).
   with the Mg²⁺/dNTP salt correction of von Ahsen et al. (2001).
 - **Primer-dimer prediction** (extensible 3′ dimers and all dimers) using
   mismatch thermodynamics, with alignment diagrams.
-- **Standard PCR**: primer pairs flanking a target (by default the longest
-  ORF), with automatic widening or narrowing of the range until pairs are
-  found, and restriction-site cloning tails kept in frame (REBASE data).
+- **Standard PCR**: primer pairs flanking a target range (by default, forward
+  primers in the first quarter of the sequence and reverse primers in the
+  last quarter, each at most 300 bp), with automatic widening or narrowing of the range until pairs
+  are found, and restriction-site cloning tails kept in frame (REBASE data).
 - **Bisulphite PCR**: primers specific for the converted strand, CpG island
   prediction, and degenerate (Y/R) primers for CpG sites.
 - **Real-time PCR**: amplicons spanning exon-exon junctions, from manually
@@ -120,6 +121,12 @@ Intentional changes:
   disables this fix to confirm everything else matches.
 - **CpG islands** that run to the end of the sequence are now reported
   (PerlPrimer silently dropped them).
+- **Default target range**: with no range given, primers are placed in the
+  first and last quarter of the sequence, each region at most 300 bp.
+  PerlPrimer defaulted to the longest ORF (standard PCR) or CpG island
+  (bisulphite); the *Find ORF* and *Find CpG islands* buttons still set the
+  range that way. Wide ranges produce many pairs and take correspondingly
+  longer.
 - **Sequencing** uses its own *Exclude %GC* and *GC clamp* options.
   PerlPrimer showed these checkboxes but applied the Standard PCR settings.
 - **Exon mapping**: NCBI Spidey is no longer distributed. PyPrimer aligns the
