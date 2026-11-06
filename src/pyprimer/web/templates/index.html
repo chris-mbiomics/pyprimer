@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PyPrimer</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23176b5b'/%3E%3Cpath d='M7 11h18M7 21h18' stroke='%23fff' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M11 11v10M16 11v10M21 11v10' stroke='%23a7e3d4' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+{% macro num(path, label, step="1", min=None, placeholder="", hint="") -%}
+  <label class="field" {% if hint %}title="{{ hint }}"{% endif %}>
+    <span>{{ label }}</span>
+    <input type="number" data-path="{{ path }}" step="{{ step }}" {% if min is not none %}min="{{ min }}"{% endif %} placeholder="{{ placeholder }}">
+  </label>
+{%- endmacro %}
+{% macro check(path, label, hint="") -%}
+  <label class="check" {% if hint %}title="{{ hint }}"{% endif %}>
+    <input type="checkbox" data-path="{{ path }}"><span>{{ label }}</span>
+  </label>
+{%- endmacro %}
+{% macro tm_fields(diff=True) -%}
+  <div class="grid">
+    {{ num("settings.min_tm", "Tm min (°C)", "0.5") }}
+    {{ num("settings.max_tm", "Tm max (°C)", "0.5") }}
+    {% if diff %}{{ num("settings.max_tm_diff", "Max ΔTm (°C)", "0.5", 0) }}{% endif %}
+    {{ num("settings.min_length", "Length min", "1", 2) }}
+    {{ num("settings.max_length", "Length max", "1", 2) }}
+  </div>
+{%- endmacro %}
+{% macro sequence_box(path, label, feature=None, ensembl=True, rows=9) -%}
+  <div class="seq-box">
+    <div class="seq-head">
+      <span class="label">{{ label }}</span>
+      <span class="seq-len" data-len-for="{{ path }}">0 bp</span>
+    </div>
+    <textarea data-path="{{ path }}" rows="{{ rows }}" spellcheck="false" autocomplete="off" aria-label="{{ label }}"
+      placeholder="Paste a DNA sequence (raw or FASTA)"></textarea>
+    <div class="toolbar">
+      <label class="btn ghost small file-btn">Open file…<input type="file" accept=".fa,.fasta,.fas,.fna,.txt,.seq" data-load-into="{{ path }}" hidden></label>
+      {% if ensembl %}<button type="button" class="btn ghost small" data-action="ensembl" data-target="{{ path }}">Ensembl…</button>{% endif %}
+      {% if feature == "orf" %}<button type="button" class="btn ghost small" data-action="features" data-kind="orf">Find ORF</button>{% endif %}
+      {% if feature == "cpg" %}<button type="button" class="btn ghost small" data-action="features" data-kind="cpg">Find CpG islands</button>{% endif %}
+      <button type="button" class="btn ghost small" data-action="revcomp" data-target="{{ path }}">Reverse complement</button>
+    </div>
+  </div>
+{%- endmacro %}
+{% macro target_fields(feature_label) -%}
+  <fieldset class="card">
+    <legend>Target range</legend>
+    <p class="help">Forward primers start between the outer and inner 5′ positions; reverse primers end between the inner and outer 3′ positions. Leave blank to use the {{ feature_label }}.</p>
+    <div class="grid four">
+      {{ num("target.outer_start", "Outer 5′", "1", 0) }}
+      {{ num("target.inner_start", "Inner 5′", "1", 0) }}
+      {{ num("target.inner_end", "Inner 3′", "1", 0) }}
+      {{ num("target.outer_end", "Outer 3′", "1", 0) }}
+    </div>
+    <div class="row">
+      <label class="field grow">
+        <span>If no pairs are found</span>
+        <select data-path="search">
+          <option value="outwards">widen the outer range 10 bp at a time</option>
+          <option value="inwards">narrow the inner range 10 bp at a time</option>
+          <option value="fixed">stop</option>
+        </select>
+      </label>
+      <button type="button" class="btn ghost small align-end" data-action="clear-target">Clear range</button>
+    </div>
+  </fieldset>
+{%- endmacro %}
+{% macro results() -%}
+  <section class="results" aria-live="polite">
+    <div class="status" data-role="status"></div>
+    <svg class="overview" data-role="overview" role="img" aria-label="Sequence overview" hidden></svg>
+    <div class="table-actions" data-role="table-actions" hidden>
+      <span data-role="count"></span>
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost small" data-action="export">Export table (TSV)</button>
+    </div>
+    <div class="table-wrap" data-role="table-wrap" hidden><table class="results-table" data-role="table"></table></div>
+    <div class="details" data-role="details" hidden></div>
+  </section>
+{%- endmacro %}
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true"></span>
+    <div>
+      <h1>PyPrimer</h1>
+      <p>Primer design for PCR, bisulphite PCR, real-time PCR and sequencing</p>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="Design mode">
+    <button role="tab" data-tab="pcr" aria-selected="true">Standard PCR</button>
+    <button role="tab" data-tab="bisulphite" aria-selected="false">Bisulphite PCR</button>
+    <button role="tab" data-tab="qpcr" aria-selected="false">Real-time PCR</button>
+    <button role="tab" data-tab="sequencing" aria-selected="false">Sequencing</button>
+    <button role="tab" data-tab="analyse" aria-selected="false">Primer analysis</button>
+    <button role="tab" data-tab="prefs" aria-selected="false">Preferences</button>
+  </nav>
+</header>
+
+<main>
+  <!-- Standard PCR -->
+  <section class="panel" id="tab-pcr" data-mode="pcr" role="tabpanel">
+    <form class="inputs" novalidate>
+      {{ sequence_box("sequence", "DNA sequence", feature="orf") }}
+      {{ target_fields("longest ORF") }}
+      <fieldset class="card">
+        <legend>Primers</legend>
+        {{ tm_fields() }}
+        <div class="checks">
+          {{ check("settings.exclude_gc", "Exclude by %GC", "Reject primers outside the %GC range set in Preferences") }}
+          {{ check("settings.gc_clamp", "3′ GC clamp", "Require two of the last three bases to be G or C") }}
+        </div>
+      </fieldset>
+      <button type="submit" class="btn primary">Find primers</button>
+    </form>
+    {{ results() }}
+  </section>
+
+  <!-- Bisulphite PCR -->
+  <section class="panel" id="tab-bisulphite" data-mode="bisulphite" role="tabpanel" hidden>
+    <form class="inputs" novalidate>
+      {{ sequence_box("sequence", "Genomic DNA sequence (unconverted)", feature="cpg") }}
+      {{ target_fields("predicted CpG island(s)") }}
+      <fieldset class="card">
+        <legend>Primers</legend>
+        {{ tm_fields() }}
+        <div class="grid">
+          {{ num("settings.min_c_percent", "Min %C", "1", 0, hint="Minimum C content of the unconverted primer") }}
+        </div>
+        <div class="checks">
+          {{ check("settings.exclude_cpg", "Exclude CpGs", "Reject primers containing CpG sites (otherwise up to two, made degenerate)") }}
+          {{ check("settings.three_prime_c", "3′ C", "Require a 3′ C, or two Cs in the last three bases") }}
+          {{ check("settings.repeats_after_conversion", "Check repeats after conversion") }}
+        </div>
+      </fieldset>
+      <button type="submit" class="btn primary">Find primers</button>
+    </form>
+    {{ results() }}
+  </section>
+
+  <!-- Real-time PCR -->
+  <section class="panel" id="tab-qpcr" data-mode="qpcr" role="tabpanel" hidden>
+    <form class="inputs" novalidate>
+      {{ sequence_box("mrna", "mRNA / cDNA sequence", rows=7) }}
+      <fieldset class="card">
+        <legend>Exon junctions</legend>
+        <p class="help">Enter the mRNA positions at which each exon after the first begins, or paste the genomic sequence and map them. “Ensembl…” fills both automatically.</p>
+        <label class="field">
+          <span>Exon boundaries (mRNA positions)</span>
+          <input type="text" data-path="exon_boundaries" data-type="intlist" placeholder="e.g. 182, 330, 517" inputmode="numeric">
+        </label>
+        <details>
+          <summary>Map from a genomic sequence</summary>
+          {{ sequence_box("genomic", "Genomic sequence", ensembl=False, rows=5) }}
+          <button type="button" class="btn ghost small" data-action="map-exons">Map exon boundaries</button>
+          <div class="exon-table" data-role="exons"></div>
+        </details>
+      </fieldset>
+      <fieldset class="card">
+        <legend>Primers</legend>
+        {{ tm_fields() }}
+        <div class="grid">
+          {{ num("settings.min_amplicon", "Amplicon min", "1", 1) }}
+          {{ num("settings.max_amplicon", "Amplicon max", "1", 1) }}
+          {{ num("settings.boundary_overlap", "Junction overlap", "1", 0, hint="Bases a junction-spanning primer must extend on each side") }}
+          {{ num("settings.first_exon", "From exon", "1", 1, "any") }}
+          {{ num("settings.last_exon", "To exon", "1", 1, "any") }}
+        </div>
+        <div class="checks">
+          {{ check("settings.span_boundary", "Amplicon spans a junction") }}
+          {{ check("settings.primer_on_boundary", "A primer spans a junction") }}
+          {{ check("settings.exclude_gc", "Exclude by %GC") }}
+          {{ check("settings.gc_clamp", "3′ GC clamp") }}
+        </div>
+      </fieldset>
+      <button type="submit" class="btn primary">Find primers</button>
+    </form>
+    {{ results() }}
+  </section>
+
+  <!-- Sequencing -->
+  <section class="panel" id="tab-sequencing" data-mode="sequencing" role="tabpanel" hidden>
+    <form class="inputs" novalidate>
+      {{ sequence_box("sequence", "DNA sequence", feature="orf") }}
+      <fieldset class="card">
+        <legend>Region and spacing</legend>
+        <div class="grid four">
+          {{ num("start", "Start", "1", 0, "0") }}
+          {{ num("end", "End", "1", 0, "sequence end") }}
+          {{ num("settings.min_spacing", "Spacing min", "10", 1) }}
+          {{ num("settings.max_spacing", "Spacing max", "10", 1) }}
+        </div>
+      </fieldset>
+      <fieldset class="card">
+        <legend>Primers</legend>
+        {{ tm_fields(diff=False) }}
+        <div class="grid">
+          {{ num("settings.max_dimer_dg", "Max self-dimer −ΔG", "0.5", 0, hint="Reject primers whose self-dimer ΔG is below minus this value (kcal/mol)") }}
+        </div>
+        <div class="checks">
+          {{ check("settings.exclude_dimers", "Exclude self-dimers") }}
+          {{ check("settings.exclude_gc", "Exclude by %GC") }}
+          {{ check("settings.gc_clamp", "3′ GC clamp") }}
+        </div>
+      </fieldset>
+      <button type="submit" class="btn primary">Find primers</button>
+    </form>
+    {{ results() }}
+  </section>
+
+  <!-- Primer analysis -->
+  <section class="panel" id="tab-analyse" data-mode="analyse" role="tabpanel" hidden>
+    <form class="inputs" novalidate>
+      <fieldset class="card">
+        <legend>Primers (5′→3′)</legend>
+        <label class="field"><span>Forward primer</span><input type="text" data-path="forward" class="mono" spellcheck="false" autocomplete="off"></label>
+        <label class="field"><span>Reverse primer (optional)</span><input type="text" data-path="reverse" class="mono" spellcheck="false" autocomplete="off"></label>
+      </fieldset>
+      <button type="submit" class="btn primary">Calculate Tm and dimers</button>
+    </form>
+    <section class="results" aria-live="polite">
+      <div class="status" data-role="status"></div>
+      <div class="details" data-role="details" hidden></div>
+    </section>
+  </section>
+
+  <!-- Preferences -->
+  <section class="panel prefs" id="tab-prefs" data-mode="prefs" role="tabpanel" hidden>
+    <form class="inputs wide" novalidate>
+      <fieldset class="card">
+        <legend>Reaction conditions</legend>
+        <p class="help">Used for Tm (SantaLucia 1998) with the salt correction of von Ahsen et al. (2001).</p>
+        <div class="grid">
+          {{ num("conditions.oligo_nm", "Primer (nM)", "any", 0) }}
+          {{ num("conditions.mg_mm", "Mg²⁺ (mM)", "any", 0) }}
+          {{ num("conditions.monovalent_mm", "Na⁺/K⁺ (mM)", "any", 0) }}
+          {{ num("conditions.dntp_mm", "dNTPs (mM)", "any", 0) }}
+          {{ num("conditions.dimer_temp_c", "Dimer ΔG at (°C)", "any") }}
+        </div>
+      </fieldset>
+      <fieldset class="card">
+        <legend>Primer filters</legend>
+        <div class="grid">
+          {{ num("gc.min_gc", "%GC min", "1", 0) }}
+          {{ num("gc.max_gc", "%GC max", "1", 0) }}
+        </div>
+        <div class="checks">{{ check("repeats.enabled", "Exclude runs and repeats") }}</div>
+        <div class="grid">
+          {{ num("repeats.run", "Run length", "1", 2, hint="Reject runs of this many identical bases") }}
+          {{ num("repeats.repeat", "Repeat count", "1", 2, hint="Reject motifs of 2+ bases repeated this many times") }}
+        </div>
+        <h3>Bisulphite primers</h3>
+        <div class="checks">{{ check("bis_repeats.enabled", "Exclude runs and repeats") }}</div>
+        <div class="grid">
+          {{ num("bis_repeats.run", "Run length", "1", 2) }}
+          {{ num("bis_repeats.repeat", "Repeat count", "1", 2) }}
+        </div>
+      </fieldset>
+      <fieldset class="card">
+        <legend>CpG island prediction</legend>
+        <div class="grid">
+          {{ num("cpg.window", "Window (bp)", "1", 2) }}
+          {{ num("cpg.min_island", "Min island (bp)", "1", 1) }}
+          {{ num("cpg.min_gc", "Min %GC", "1", 0) }}
+          {{ num("cpg.min_obs_exp", "Min Obs/Exp", "0.05", 0) }}
+        </div>
+        <div class="checks">{{ check("cpg.cpgplot", "Emulate EMBOSS cpgplot", "Reproduce cpgplot's slightly inflated averages") }}</div>
+      </fieldset>
+      <div class="row">
+        <button type="button" class="btn ghost" data-action="reset-prefs">Restore defaults</button>
+        <span class="status" data-role="status"></span>
+      </div>
+    </form>
+  </section>
+</main>
+
+<footer class="footer">
+  PyPrimer {{ version }} · Python port of PerlPrimer 1.1.21 by Owen Marshall · GNU GPL v2 or later · Restriction enzyme data from REBASE
+</footer>
+
+<dialog id="ensembl-dialog" aria-labelledby="ensembl-title">
+  <form method="dialog" class="dialog-body">
+    <h2 id="ensembl-title">Retrieve from Ensembl</h2>
+    <div class="grid two">
+      <label class="field"><span>Species</span>
+        <input type="text" name="species" list="species-list" value="homo_sapiens" autocomplete="off"></label>
+      <label class="field"><span>Gene symbol or Ensembl ID</span>
+        <input type="text" name="q" placeholder="e.g. BRCA2" autocomplete="off"></label>
+    </div>
+    <datalist id="species-list">
+      {% for s in ["homo_sapiens", "mus_musculus", "rattus_norvegicus", "danio_rerio", "gallus_gallus", "bos_taurus", "sus_scrofa", "canis_lupus_familiaris", "macaca_mulatta", "xenopus_tropicalis", "drosophila_melanogaster", "caenorhabditis_elegans", "saccharomyces_cerevisiae"] %}<option value="{{ s }}">{% endfor %}
+    </datalist>
+    <div class="row"><button type="button" class="btn" data-action="ensembl-search">Search</button><span class="status" data-role="ensembl-status"></span></div>
+    <div data-role="ensembl-gene"></div>
+    <div class="row end">
+      <button value="cancel" class="btn ghost">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
+</html>
