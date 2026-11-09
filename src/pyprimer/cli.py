@@ -8,7 +8,7 @@ import webbrowser
 from collections.abc import Sequence
 
 from . import __version__
-from .autodimer import AutoDimerSettings, parse_oligos, report_text, screen_dimers, screen_hairpins
+from .autodimer import AutoDimerSettings, full_report, parse_oligos, screen_dimers, screen_hairpins
 from .report import analyse_pair
 
 
@@ -34,12 +34,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     defaults = AutoDimerSettings()
     ad = commands.add_parser(
-        "autodimer", help="screen a set of oligos for primer-dimers or hairpins (AutoDimer)"
+        "autodimer", help="screen a set of oligos for primer-dimers and hairpins (AutoDimer)"
     )
     ad.add_argument("file", help="text/FASTA file of oligos ('-' for standard input)")
-    ad.add_argument("--hairpin", action="store_true", help="screen for hairpins instead")
     ad.add_argument(
-        "--score", type=int, default=defaults.min_score, help="minimum score (default: %(default)s)"
+        "--score",
+        type=int,
+        default=defaults.min_score,
+        help="minimum primer-dimer score (default: %(default)s)",
+    )
+    ad.add_argument(
+        "--hairpin-score",
+        type=int,
+        default=defaults.hairpin_min_score,
+        help="minimum hairpin score (default: %(default)s)",
     )
     ad.add_argument(
         "--na", type=float, default=defaults.sodium_m, help="Na+ in M (default: %(default)s)"
@@ -108,16 +116,15 @@ def _autodimer(args: argparse.Namespace) -> int:
         else:
             with open(args.file, encoding="utf-8", errors="replace") as handle:
                 text = handle.read()
-        settings = AutoDimerSettings(args.na, args.ct, args.dg_temp, args.score)
+        settings = AutoDimerSettings(args.na, args.ct, args.dg_temp, args.score, args.hairpin_score)
         oligos = parse_oligos(text)
     except (OSError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    if len(oligos) < (1 if args.hairpin else 2):
-        print("Error: not enough sequences to screen", file=sys.stderr)
+    if not oligos:
+        print("Error: no sequences to screen", file=sys.stderr)
         return 1
-    screen = (screen_hairpins if args.hairpin else screen_dimers)(oligos, settings)
-    print(report_text(screen), end="")
+    print(full_report(screen_dimers(oligos, settings), screen_hairpins(oligos, settings)), end="")
     return 0
 
 

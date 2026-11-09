@@ -244,17 +244,17 @@
       </div>
       <fieldset class="card">
         <legend>Screening</legend>
-        <p class="help">Every pair of oligos is slid against each other, and each oligo is folded with 4 or 5 base loops. Score = Watson–Crick matches − mismatches; Tm and ΔG are rough nearest-neighbour estimates (SantaLucia 1998). After AutoDimer by Vallone &amp; Butler (NIST).</p>
+        <p class="help">Every pair of oligos, and each oligo with itself, is slid against each other, and each oligo is folded with 4 or 5 base loops. Score = Watson–Crick matches − mismatches; Tm and ΔG are rough nearest-neighbour estimates (SantaLucia 1998). After AutoDimer by Vallone &amp; Butler (NIST).</p>
         <div class="grid">
-          {{ num("settings.min_score", "Minimum score", "1", hint="Report interactions scoring at least this; 7–8 suits multiplex PCR primers") }}
+          {{ num("settings.min_score", "Min. dimer score", "1", hint="Report primer-dimers scoring at least this; 7–8 suits multiplex PCR primers") }}
+          {{ num("settings.hairpin_min_score", "Min. hairpin score", "1", hint="Report hairpins scoring at least this; hairpin stems are short, so 3–5 is typical") }}
           {{ num("settings.sodium_m", "Na⁺ (M)", "any", 0) }}
           {{ num("settings.strand_um", "Total strand (µM)", "any", 0) }}
           {{ num("settings.dg_temp_c", "ΔG at (°C)", "any") }}
         </div>
       </fieldset>
       <div class="row">
-        <button type="submit" class="btn primary" value="dimer">Primer-dimer screen</button>
-        <button type="submit" class="btn" value="hairpin">Hairpin screen</button>
+        <button type="submit" class="btn primary">Screen for dimers and hairpins</button>
         <button type="button" class="btn ghost small" data-action="autodimer-defaults">Restore defaults</button>
       </div>
     </form>
@@ -265,7 +265,13 @@
         <span class="spacer"></span>
         <button type="button" class="btn ghost small" data-action="save-text">Save results (text)</button>
       </div>
-      <div class="table-wrap" data-role="table-wrap" hidden><table class="results-table autodimer" data-role="table"></table></div>
+      {% for kind, title in [("dimers", "Primer-dimers"), ("hairpins", "Hairpins")] %}
+      <div class="autodimer-section" data-section="{{ kind }}" hidden>
+        <h3>{{ title }} <span class="muted" data-role="section-count"></span></h3>
+        <p class="msg" data-role="section-empty" hidden></p>
+        <div class="table-wrap" data-role="table-wrap" hidden><table class="results-table autodimer" data-role="table"></table></div>
+      </div>
+      {% endfor %}
     </section>
   </section>
 

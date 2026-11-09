@@ -45,11 +45,13 @@ def _lineup(text: str) -> str:
 
 
 def _settings(params: dict[str, str]) -> AutoDimerSettings:
+    score = int(params["requiredScore"])  # NIST uses one threshold for both screens
     return AutoDimerSettings(
         sodium_m=float(params["monovalentSalt"]),
         strand_um=float(params["strandConcentration"]),
         dg_temp_c=float(params["deltaGTemperature"]),
-        min_score=int(params["requiredScore"]),
+        min_score=score,
+        hairpin_min_score=score,
     )
 
 
@@ -87,7 +89,7 @@ def _actual(case: dict[str, Any]) -> list[tuple[Any, ...]]:
             format_value(d.tm, "< 0"),
             format_value(d.dg, "> 0"),
         )
-        for d in screen_dimers(oligos, settings).hits
+        for d in screen_dimers(oligos, settings, self_dimers=False).hits
     ]
 
 

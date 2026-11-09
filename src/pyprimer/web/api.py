@@ -11,8 +11,8 @@ from werkzeug.exceptions import HTTPException
 from .. import ensembl
 from ..autodimer import (
     AutoDimerSettings,
+    full_report,
     parse_oligos,
-    report_text,
     screen_dimers,
     screen_hairpins,
 )
@@ -151,7 +151,6 @@ class ExonRequest:
 @dataclass(frozen=True)
 class AutoDimerRequest:
     sequences: str = ""
-    screen: str = "dimer"
     settings: AutoDimerSettings = field(default_factory=AutoDimerSettings)
 
 
@@ -311,24 +310,21 @@ def analyse() -> Response:
 
 @api.post("/autodimer")
 def autodimer() -> Response:
-    """AutoDimer primer-dimer or hairpin screen of a set of oligos."""
+    """AutoDimer screen of a set of oligos for primer-dimers and hairpins."""
     req = build(AutoDimerRequest, _payload())
-    if req.screen not in ("dimer", "hairpin"):
-        raise ApiError(f"Unknown screen: {req.screen}")
     try:
         oligos = parse_oligos(req.sequences)
     except ValueError as exc:
         raise ApiError(str(exc)) from exc
-    if req.screen == "dimer" and len(oligos) < 2:
-        raise ApiError("Enter at least two sequences for a primer-dimer screen")
     if not oligos:
         raise ApiError("Enter at least one sequence")
-    screen = (screen_dimers if req.screen == "dimer" else screen_hairpins)(oligos, req.settings)
+    dimers = screen_dimers(oligos, req.settings)
+    hairpins = screen_hairpins(oligos, req.settings)
     return jsonify(
-        hits=dump(screen.hits),
-        comparisons=screen.comparisons,
+        dimers={"hits": dump(dimers.hits), "comparisons": dimers.comparisons},
+        hairpins={"hits": dump(hairpins.hits), "comparisons": hairpins.comparisons},
         sequences=len(oligos),
-        text=report_text(screen),
+        text=full_report(dimers, hairpins),
     )
 
 

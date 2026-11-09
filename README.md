@@ -132,21 +132,26 @@ older design before ordering.
 When several primer pairs go into one reaction, every primer can dimerise
 with every other. The **AutoDimer** tab checks a whole set at once.
 
-![AutoDimer: a six-oligo multiplex set screened for primer-dimers](docs/images/autodimer.webp)
+![AutoDimer: a six-oligo multiplex set screened for primer-dimers and hairpins](docs/images/autodimer.webp)
 
 1. Paste the oligos, 5′→3′, one per line. Label them with FASTA-style
    `>name` lines so the results are readable. *Open file…* loads a text or
    FASTA file.
-2. Click **Primer-dimer screen** to slide every pair of oligos against each
-   other, or **Hairpin screen** to fold each oligo on itself.
-3. Each hit shows the two oligos, the alignment, its score (Watson–Crick
-   matches minus mismatches), and rough Tm and ΔG estimates. *Save results
-   (text)* downloads the full report.
+2. Click **Screen for dimers and hairpins**. Every pair of oligos, and each
+   oligo with itself (self-dimers), is slid against each other, and each
+   oligo is folded on itself to look for hairpins.
+3. Primer-dimers and hairpins are listed in separate tables. Each hit shows
+   the oligo(s), the alignment, its score (Watson–Crick matches minus
+   mismatches), and rough Tm and ΔG estimates. *Save results (text)*
+   downloads the full report.
 
-*Minimum score* sets how strong an interaction has to be before it is
-reported. The default is 7; 7–8 is a sensible cut-off for multiplex PCR
-primers, while a low value such as 3 lists nearly every weak interaction. Na⁺, strand concentration and the ΔG temperature
-only affect the Tm and ΔG estimates.
+*Min. dimer score* and *Min. hairpin score* set how strong an interaction
+has to be before it is reported. For primer-dimers the default is 7; 7–8 is
+a sensible cut-off for multiplex PCR primers, while a low value such as 3
+lists nearly every weak interaction. Hairpin stems are short, so the hairpin
+default is 4. If a screen finds nothing, *Try a lower score* reruns it with a
+lower threshold. Na⁺, strand concentration and the ΔG temperature only
+affect the Tm and ΔG estimates.
 
 This is a port of AutoDimer by Vallone & Butler (NIST). Primer-dimer results
 match the NIST web service exactly; see [AutoDimer details](#autodimer-details)
@@ -180,8 +185,7 @@ Check one or two primers without opening the browser:
 Screen a file of oligos (FASTA-style `>label` lines) with AutoDimer:
 
 ```bash
-.venv/bin/pyprimer autodimer primers.txt --score 7
-.venv/bin/pyprimer autodimer primers.txt --hairpin --score 3
+.venv/bin/pyprimer autodimer primers.txt --score 7 --hairpin-score 4
 ```
 
 Run `pyprimer --help` or `pyprimer <command> --help` for all options.
@@ -226,9 +230,10 @@ Basic program is distributed only as a compiled binary, so the algorithm was
 reconstructed from the paper and calibrated against the web version NIST hosts
 at [dnaanalysis.nist.gov](https://dnaanalysis.nist.gov/DNAAnalysis/primer-tools).
 
-- Each pair of different oligos is slid against each other, and each oligo is
-  folded with 4- and 5-base loops and stems of at least 2 bp. Score = Watson–Crick
-  matches − mismatches; alignments scoring at least the threshold are reported.
+- Each pair of oligos, including each oligo with itself, is slid against each
+  other, and each oligo is folded with 4- and 5-base loops and stems of at
+  least 2 bp. Score = Watson–Crick matches − mismatches; alignments scoring at
+  least the dimer or hairpin threshold are reported.
 - Tm and ΔG use SantaLucia (1998) unified nearest-neighbour parameters with
   his empirical salt correction (Na⁺ only). Stacks are counted only between
   adjacent matched pairs, and each mismatch adds 0.438 kcal/mol to ΔH. These
@@ -237,7 +242,6 @@ at [dnaanalysis.nist.gov](https://dnaanalysis.nist.gov/DNAAnalysis/primer-tools)
 Primer-dimer results (alignments, matches, scores, Tm and ΔG) match the NIST
 web service exactly, including some of its quirks:
 
-- Self-dimers are not screened.
 - For oligos of different lengths, overlaps are tried from both ends of the
   shorter oligo. If the longer one is 4 or more bases longer, a few extra
   shifts follow. These compare bases offset by one from where they are drawn.
@@ -245,6 +249,12 @@ web service exactly, including some of its quirks:
   penalty is not applied to the last position of an alignment.
 
 Deliberate differences from the NIST service:
+
+- **Self-dimers** are screened, as in the original program (the paper counts
+  (n² + n)/2 comparisons for n oligos). The NIST web service skips them. A
+  self-dimer's full overlap is listed once.
+- Primer-dimers and hairpins are screened together, with separate score
+  thresholds. NIST runs them separately with one threshold.
 
 - If the longer oligo is at least 2n + 3 bases (n = shorter length), NIST
   reports an error. PyPrimer caps the extra shifts instead.

@@ -53,6 +53,7 @@ def test_defaults(client: FlaskClient) -> None:
     assert data["pcr"]["repeats"] == {"enabled": True, "run": 4, "repeat": 3}
     assert data["conditions"]["oligo_nm"] == 200
     assert data["autodimer"]["min_score"] == 7
+    assert data["autodimer"]["hairpin_min_score"] == 4
 
 
 def test_features(client: FlaskClient, seq: str) -> None:
@@ -148,26 +149,28 @@ def test_analyse(client: FlaskClient) -> None:
 
 def test_autodimer(client: FlaskClient) -> None:
     oligos = ">F\nGTCAGCTAGTAGCTAGCGCA\n>R\nTGCGCTAGCTACTAGCTGAC\n"
-    body = {"sequences": oligos, "settings": {"min_score": 20}}
+    body = {"sequences": oligos, "settings": {"min_score": 20, "hairpin_min_score": 3}}
     status, data = post(client, "/autodimer", body)
-    assert status == 200
-    assert data["comparisons"] == 1 and data["sequences"] == 2
-    assert [(h["label_1"], h["label_2"], h["score"]) for h in data["hits"]] == [("R", "F", 20)] * 2
-    assert data["hits"][0]["tm"] == pytest.approx(59.7, abs=0.05)
-    assert "Number of Hits = 2" in data["text"]
+    assert status == 200 and data["sequences"] == 2
+    dimers, hairpins = data["dimers"], data["hairpins"]
+    assert dimers["comparisons"] == 3 and hairpins["comparisons"] == 2
+    assert [(h["label_1"], h["label_2"], h["score"]) for h in dimers["hits"]] == [
+        ("R", "F", 20)
+    ] * 2
+    assert dimers["hits"][0]["tm"] == pytest.approx(59.7, abs=0.05)
+    assert [h["label"] for h in hairpins["hits"]] == ["F", "R"]
+    assert "PRIMER-DIMERS" in data["text"] and "HAIRPINS" in data["text"]
 
-    status, data = post(client, "/autodimer", {**body, "screen": "hairpin", "settings": {}})
-    assert status == 200 and data["comparisons"] == 2
-    assert all(h["loop"] in (4, 5) for h in data["hits"])
+    # A single oligo still gets its self-dimers and hairpins screened.
+    status, data = post(client, "/autodimer", {"sequences": "GAATTCCGGAATTC"})
+    assert status == 200 and data["dimers"]["hits"][0]["self_dimer"]
 
 
 @pytest.mark.parametrize(
     ("body", "message"),
     [
-        ({"sequences": "ACGTACGT"}, "at least two"),
-        ({"sequences": ""}, "at least two"),
-        ({"sequences": "", "screen": "hairpin"}, "at least one"),
-        ({"sequences": "ACGT\nACGT", "screen": "bogus"}, "Unknown screen"),
+        ({"sequences": ""}, "at least one"),
+        ({"sequences": "ACGT", "screen": "dimer"}, "unknown field"),
         ({"sequences": "ACGT\nACGT", "settings": {"sodium_m": 0}}, "greater than zero"),
         ({"sequences": "ACGT\n" * 101}, "Too many"),
     ],

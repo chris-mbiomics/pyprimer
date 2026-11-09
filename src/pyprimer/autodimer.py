@@ -6,14 +6,14 @@ program is only distributed compiled, so this module was reconstructed from
 the paper and calibrated against the NIST web service; the recorded
 reference results live in ``tests/data/autodimer_nist.json``.
 
-Every pair of distinct oligos is slid against each other and every hairpin
-fold (4 or 5 base loops) is tried. Each alignment gets a score of
-Watson-Crick matches minus mismatches; alignments scoring at least the
-threshold are reported with a rough Tm and dG from SantaLucia (1998)
-nearest-neighbour parameters.
+Every pair of oligos, including each oligo with itself, is slid against each
+other, and every hairpin fold (4 or 5 base loops) is tried. Each alignment
+gets a score of Watson-Crick matches minus mismatches; alignments scoring at
+least the threshold (one for dimers, one for hairpins) are reported with a
+rough Tm and dG from SantaLucia (1998) nearest-neighbour parameters.
 
 Quirks of the NIST implementation are kept deliberately (see README.md,
-"AutoDimer"): self-dimers are not screened; when the oligos differ in length,
+"AutoDimer details"): when the oligos differ in length,
 only alignments anchored at either end of the shorter oligo are tried, plus a
 few truncated extra shifts; unknown bases count as mismatches; and the
 mismatch penalty is not applied to the last position of an alignment.
@@ -65,13 +65,15 @@ class AutoDimerSettings:
         sodium_m: Monovalent salt concentration (M).
         strand_um: Total strand concentration (uM); affects Tm only.
         dg_temp_c: Temperature at which dG is evaluated (C).
-        min_score: Report interactions scoring at least this (matches - mismatches).
+        min_score: Report primer-dimers scoring at least this (matches - mismatches).
+        hairpin_min_score: Report hairpins scoring at least this.
     """
 
     sodium_m: float = 0.085
     strand_um: float = 1.0
     dg_temp_c: float = 37.0
     min_score: int = 7
+    hairpin_min_score: int = 4
 
     def __post_init__(self) -> None:
         if self.sodium_m <= 0:
@@ -93,11 +95,11 @@ class Oligo:
 
 @dataclass(frozen=True)
 class Dimer:
-    """One primer-primer alignment.
+    """One primer-primer alignment (``self_dimer``: an oligo with itself).
 
-    ``top`` and ``bottom`` are the oligos as drawn in ``lineup`` (the longer
-    one on top). ``tm`` is ``None`` below 0 C and ``dg`` is ``None`` when not
-    negative, which AutoDimer reports as "< 0" and "> 0".
+    ``lineup`` draws the longer oligo on top. ``tm`` is ``None`` below 0 C
+    and ``dg`` is ``None`` when not negative, which AutoDimer reports as
+    "< 0" and "> 0".
     """
 
     label_1: str
@@ -110,6 +112,7 @@ class Dimer:
     tm: float | None
     dg: float | None
     lineup: str
+    self_dimer: bool = False
 
 
 @dataclass(frozen=True)
@@ -324,19 +327,29 @@ def _dimer_alignments(top: str, bottom: str) -> list[tuple[str, str, str, list[b
 
 
 def screen_dimers(
-    oligos: list[Oligo], settings: AutoDimerSettings = DEFAULT_SETTINGS
+    oligos: list[Oligo],
+    settings: AutoDimerSettings = DEFAULT_SETTINGS,
+    *,
+    self_dimers: bool = True,
 ) -> DimerScreen:
-    """Screen every pair of distinct oligos for primer-dimers.
+    """Screen every pair of oligos for primer-dimers.
 
     Pairs are visited as NIST does (last oligo first, each against all
-    earlier ones); hits keep that order.
+    earlier ones), each oligo followed by its self-dimer; hits keep that
+    order. NIST does not screen self-dimers (``self_dimers=False``).
     """
     hits: list[Dimer] = []
-    for j in range(len(oligos) - 1, 0, -1):
+    for j in range(len(oligos) - 1, -1, -1):
         one = oligos[j]
-        for two in oligos[:j]:
+        for i, two in enumerate(oligos[: j + 1]):
+            is_self = i == j
+            if is_self and not self_dimers:
+                continue
             top, bottom = (one, two) if len(one.sequence) > len(two.sequence) else (two, one)
-            for lineup, strand, _, paired in _dimer_alignments(top.sequence, bottom.sequence):
+            alignments = _dimer_alignments(top.sequence, bottom.sequence)
+            if is_self:  # the full overlap is drawn from both ends; keep one
+                del alignments[2 * len(one.sequence) - 1]
+            for lineup, strand, _, paired in alignments:
                 score = _score(paired)
                 if score < settings.min_score:
                     continue
@@ -353,10 +366,12 @@ def screen_dimers(
                         tm=tm,
                         dg=dg,
                         lineup=lineup,
+                        self_dimer=is_self,
                     )
                 )
     n = len(oligos)
-    return DimerScreen(hits, n * (n - 1) // 2, settings)
+    pairs = n * (n + 1) // 2 if self_dimers else n * (n - 1) // 2
+    return DimerScreen(hits, pairs, settings)
 
 
 def _hairpin_folds(seq: str) -> list[tuple[int, int, str, str, list[bool], str]]:
@@ -388,7 +403,7 @@ def screen_hairpins(
     for oligo in oligos:
         for loop, stem, _, arm3, paired, lineup in _hairpin_folds(oligo.sequence):
             score = _score(paired)
-            if score < settings.min_score:
+            if score < settings.hairpin_min_score:
                 continue
             tm, dg = hairpin_thermo(arm3, paired, settings)
             hits.append(
@@ -425,15 +440,21 @@ def report_text(screen: DimerScreen | HairpinScreen) -> str:
     s = screen.settings
     hairpins = isinstance(screen, HairpinScreen)
     kind = "Hairpin" if hairpins else "Primer-Primer"
+    threshold = s.hairpin_min_score if hairpins else s.min_score
     temp = f"{s.dg_temp_c:g}"
     lines = [
-        f"Na+ = {s.sodium_m:g} M   Ct = {s.strand_um:g} uM   Threshold Score = {s.min_score}",
+        f"Na+ = {s.sodium_m:g} M   Ct = {s.strand_um:g} uM   Threshold Score = {threshold}",
         f"Total Number of {kind} Comparisons = {screen.comparisons}",
         f"Number of Hits = {len(screen.hits)}",
         "-" * 60,
     ]
     for hit in screen.hits:
-        names = hit.label if isinstance(hit, Hairpin) else f"{hit.label_1} versus {hit.label_2}"
+        if isinstance(hit, Hairpin):
+            names = hit.label
+        elif hit.self_dimer:
+            names = f"{hit.label_1} (self-dimer)"
+        else:
+            names = f"{hit.label_1} versus {hit.label_2}"
         lines += [
             "",
             names,
@@ -446,3 +467,8 @@ def report_text(screen: DimerScreen | HairpinScreen) -> str:
         what = "HAIRPIN" if hairpins else "PRIMER-DIMER"
         lines.append(f"\nNO {what} HITS FOR THIS SCORE THRESHOLD")
     return "\n".join(lines) + "\n"
+
+
+def full_report(dimers: DimerScreen, hairpins: HairpinScreen) -> str:
+    """Primer-dimer and hairpin results in one text report."""
+    return "PRIMER-DIMERS\n\n" + report_text(dimers) + "\n\nHAIRPINS\n\n" + report_text(hairpins)

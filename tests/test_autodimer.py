@@ -9,6 +9,7 @@ from pyprimer.autodimer import (
     Oligo,
     dimer_thermo,
     format_value,
+    full_report,
     hairpin_thermo,
     normalise,
     parse_oligos,
@@ -18,7 +19,7 @@ from pyprimer.autodimer import (
 )
 
 PAPER = "GTCAGCTAGTAGCTAGCGCA"  # Figure 3 of Vallone & Butler (2004)
-EVERYTHING = AutoDimerSettings(min_score=-100)
+EVERYTHING = AutoDimerSettings(min_score=-100, hairpin_min_score=-100)
 
 
 class TestInput:
@@ -45,16 +46,15 @@ class TestInput:
 class TestDimers:
     def test_paper_example(self) -> None:
         # The paper's self-dimer: 12 matches and 5 mismatches give a score of 7.
-        oligos = [Oligo("a", PAPER), Oligo("b", PAPER)]
-        hits = screen_dimers(oligos, AutoDimerSettings(min_score=7)).hits
-        assert {(h.matches, h.score) for h in hits} == {(12, 7)}
+        hits = screen_dimers([Oligo("a", PAPER)], AutoDimerSettings(min_score=7)).hits
+        assert {(h.matches, h.score, h.self_dimer) for h in hits} == {(12, 7, True)}
 
     def test_alignments_per_pair(self) -> None:
         # Equal lengths: every overlap from each end; NIST adds a few extra
         # shifts when the longer oligo is 4+ bases longer, capped here.
         def count(n: int, m: int) -> int:
-            screen = screen_dimers([Oligo("a", "A" * n), Oligo("b", "C" * m)], EVERYTHING)
-            return len(screen.hits)
+            oligos = [Oligo("a", "A" * n), Oligo("b", "C" * m)]
+            return len(screen_dimers(oligos, EVERYTHING, self_dimers=False).hits)
 
         assert count(20, 20) == 40
         assert count(20, 18) == 36
@@ -65,13 +65,21 @@ class TestDimers:
     def test_pairs_and_order(self) -> None:
         oligos = [Oligo(f"S{i}", "GCGCGCGC") for i in range(1, 4)]
         screen = screen_dimers(oligos, AutoDimerSettings(min_score=8))
-        assert screen.comparisons == 3
+        assert screen.comparisons == 6
         assert [(h.label_1, h.label_2) for h in screen.hits] == [
-            ("S3", "S1"), ("S3", "S1"), ("S3", "S2"), ("S3", "S2"), ("S2", "S1"), ("S2", "S1"),
+            ("S3", "S1"), ("S3", "S1"), ("S3", "S2"), ("S3", "S2"), ("S3", "S3"),
+            ("S2", "S1"), ("S2", "S1"), ("S2", "S2"), ("S1", "S1"),
         ]  # fmt: skip
+        without = screen_dimers(oligos, AutoDimerSettings(min_score=8), self_dimers=False)
+        assert without.comparisons == 3 and len(without.hits) == 6
 
-    def test_no_self_dimers(self) -> None:
-        assert screen_dimers([Oligo("a", "GAATTC"), Oligo("b", "AAAAAA")]).hits == []
+    def test_self_dimers(self) -> None:
+        oligos = [Oligo("a", "GAATTCCGGAATTC"), Oligo("b", "AAAAAAAAAAAA")]
+        hits = screen_dimers(oligos, AutoDimerSettings(min_score=14)).hits
+        assert [(h.label_1, h.label_2, h.self_dimer) for h in hits] == [("a", "a", True)]
+        assert format_value(hits[0].tm, "") == "43.2"  # symmetry-corrected
+        # A self-dimer tries every overlap once: 2n - 1 alignments.
+        assert len(screen_dimers([Oligo("x", "ACGTAGGT")], EVERYTHING).hits) == 15
 
     def test_threshold_inclusive(self) -> None:
         oligos = [Oligo("a", PAPER), Oligo("b", "TGCGCTAGCTACTAGCTGAC")]
@@ -122,11 +130,16 @@ class TestHairpins:
         assert min(h.stem for h in screen.hits) == 2
 
     def test_paper_hairpin(self) -> None:
-        hits = screen_hairpins([Oligo("p", PAPER)], AutoDimerSettings(min_score=3)).hits
+        hits = screen_hairpins([Oligo("p", PAPER)], AutoDimerSettings(hairpin_min_score=3)).hits
         assert [(h.loop, h.stem, h.matches, h.score, h.match_sequence) for h in hits] == [
             (5, 7, 5, 3, "TAGCNNA")
         ]
         assert hits[0].lineup == " TGATCGACTG-5'\nA  ||||XX|\n GCTAGCGCA-3'"
+
+    def test_own_threshold(self) -> None:
+        oligos = [Oligo("p", PAPER)]
+        assert screen_hairpins(oligos, AutoDimerSettings(min_score=-100)).hits == []
+        assert screen_hairpins(oligos, AutoDimerSettings(hairpin_min_score=3)).hits
 
     def test_too_short(self) -> None:
         assert screen_hairpins([Oligo("s", "ACGTACGTA")], EVERYTHING).hits == []
@@ -134,8 +147,10 @@ class TestHairpins:
 
 def test_report_text() -> None:
     oligos = [Oligo("F", PAPER), Oligo("R", "TGCGCTAGCTACTAGCTGAC")]
-    text = report_text(screen_dimers(oligos, AutoDimerSettings(min_score=20)))
-    assert "Total Number of Primer-Primer Comparisons = 1" in text
+    settings = AutoDimerSettings(min_score=20, hairpin_min_score=30)
+    text = full_report(screen_dimers(oligos, settings), screen_hairpins(oligos, settings))
+    assert "Total Number of Primer-Primer Comparisons = 3" in text
     assert "R versus F" in text and "Score = 20" in text
-    empty = report_text(screen_hairpins(oligos, AutoDimerSettings(min_score=30)))
-    assert "NO HAIRPIN HITS" in empty
+    assert "Threshold Score = 30" in text and "NO HAIRPIN HITS" in text
+    self_dimer = report_text(screen_dimers([Oligo("P", PAPER)], AutoDimerSettings(min_score=7)))
+    assert "P (self-dimer)" in self_dimer

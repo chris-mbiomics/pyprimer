@@ -721,6 +721,11 @@
     ["ΔG (kcal/mol)", "dg", true],
     ["Alignment", "lineup", false],
   ];
+  const AUTODIMER_KINDS = {
+    dimers: { name: "primer-dimers", scorePath: "settings.min_score", lower: (s) => s - 1 },
+    // Hairpin stems are short, so drop straight to a typical hairpin score.
+    hairpins: { name: "hairpins", scorePath: "settings.hairpin_min_score", lower: (s) => Math.min(s - 1, 3) },
+  };
 
   function countOligos(text) {
     const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -733,7 +738,7 @@
     const form = $("form", panel);
     const textarea = field(panel, "sequences");
     const counter = $('[data-role="oligo-count"]', panel);
-    const result = { data: null, rows: [], sort: null, screen: "dimer" };
+    let result = null; // { data, settings, sections: { dimers: {rows, sort}, hairpins: {rows, sort} } }
 
     const updateCount = () => {
       const n = countOligos(textarea.value);
@@ -751,75 +756,100 @@
       save();
     });
 
-    const value = (row, key) => {
-      if (key === "labels") return row.label ?? `${row.label_1} vs ${row.label_2}`;
-      return row[key];
-    };
+    const value = (row, key) => (key === "labels" ? row.label ?? `${row.label_1} vs ${row.label_2}` : row[key]);
     const shown = (v, missing) => (v === null ? missing : v.toFixed(1));
+    const labelsHtml = (row) => {
+      if (row.label !== undefined) return escapeHtml(row.label);
+      if (row.self_dimer) return `${escapeHtml(row.label_1)}<br><span class="vs">self-dimer</span>`;
+      return `${escapeHtml(row.label_1)}<br><span class="vs">vs</span> ${escapeHtml(row.label_2)}`;
+    };
 
-    function render() {
-      const { data, rows } = result;
-      const wrap = $('[data-role="table-wrap"]', panel);
-      const actions = $('[data-role="table-actions"]', panel);
-      actions.hidden = false;
+    function renderSection(kind) {
+      const section = $(`[data-section="${kind}"]`, panel);
+      const { rows, sort } = result.sections[kind];
+      const { comparisons } = result.data[kind];
+      const score = getPath(result.settings, AUTODIMER_KINDS[kind].scorePath);
+      section.hidden = false;
+      $('[data-role="section-count"]', section).textContent =
+        `${rows.length.toLocaleString()} hit${rows.length === 1 ? "" : "s"} · score ≥ ${score} · ` +
+        `${comparisons.toLocaleString()} ${kind === "dimers" ? "pairs" : "oligos"} screened`;
+      const empty = $('[data-role="section-empty"]', section);
+      const wrap = $('[data-role="table-wrap"]', section);
+      empty.hidden = rows.length > 0;
       wrap.hidden = !rows.length;
-      const kind = result.screen === "dimer" ? "primer-dimer" : "hairpin";
-      $('[data-role="count"]', panel).textContent =
-        `${rows.length.toLocaleString()} ${kind} hit${rows.length === 1 ? "" : "s"} · ` +
-        `${data.comparisons.toLocaleString()} ${result.screen === "dimer" ? "primer pairs" : "oligos"} screened`;
-      if (!rows.length) return;
-      const table = $('[data-role="table"]', panel);
-      const temp = data.dg_temp_c;
+      if (!rows.length) {
+        empty.innerHTML = `No ${AUTODIMER_KINDS[kind].name} found at score ${escapeHtml(score)}. <a href="#" data-action="lower-score">Try a lower score</a>`;
+        $('[data-action="lower-score"]', empty).addEventListener("click", (event) => {
+          event.preventDefault();
+          const input = field(panel, AUTODIMER_KINDS[kind].scorePath);
+          input.value = AUTODIMER_KINDS[kind].lower(score);
+          save();
+          form.requestSubmit();
+        });
+        return;
+      }
+      const table = $('[data-role="table"]', section);
       table.innerHTML =
         `<thead><tr>${AUTODIMER_COLUMNS.map(([label, , numeric], i) => {
-          const s = result.sort && result.sort.col === i ? (result.sort.dir > 0 ? "ascending" : "descending") : "none";
-          const text = i === 4 ? `ΔG at ${temp} °C (kcal/mol)` : label;
+          const s = sort && sort.col === i ? (sort.dir > 0 ? "ascending" : "descending") : "none";
+          const text = i === 4 ? `ΔG at ${result.settings.settings.dg_temp_c} °C (kcal/mol)` : label;
           return `<th scope="col" data-col="${i}" aria-sort="${s}" ${numeric ? "" : 'class="text"'}>${escapeHtml(text)}</th>`;
         }).join("")}</tr></thead>` +
         `<tbody>${rows
-          .map((row) => {
-            const labels = row.label
-              ? escapeHtml(row.label)
-              : `${escapeHtml(row.label_1)}<br><span class="vs">vs</span> ${escapeHtml(row.label_2)}`;
-            return `<tr>
-              <td class="labels">${labels}</td>
+          .map(
+            (row) => `<tr>
+              <td class="labels">${labelsHtml(row)}</td>
               <td class="num">${row.score}</td>
               <td class="num">${row.matches}</td>
               <td class="num">${shown(row.tm, "< 0")}</td>
               <td class="num">${shown(row.dg, "> 0")}</td>
               <td class="seq"><pre>${escapeHtml(row.lineup)}</pre></td>
-            </tr>`;
-          })
+            </tr>`,
+          )
           .join("")}</tbody>`;
       $$("th", table).forEach((th) =>
         th.addEventListener("click", () => {
           const col = Number(th.dataset.col);
           const key = AUTODIMER_COLUMNS[col][1];
-          const dir = result.sort && result.sort.col === col ? -result.sort.dir : 1;
+          const current = result.sections[kind];
+          const dir = current.sort && current.sort.col === col ? -current.sort.dir : 1;
           // "< 0" and "> 0" (null) sort as the least and most stable values.
           const missing = key === "tm" ? -Infinity : key === "dg" ? Infinity : "";
           const v = (row) => value(row, key) ?? missing;
-          result.sort = { col, dir };
-          result.rows = [...result.rows].sort((a, b) => (v(a) < v(b) ? -dir : v(a) > v(b) ? dir : 0));
-          render();
+          current.sort = { col, dir };
+          current.rows = [...current.rows].sort((a, b) => (v(a) < v(b) ? -dir : v(a) > v(b) ? dir : 0));
+          renderSection(kind);
         }),
       );
     }
 
+    function render() {
+      $('[data-role="table-actions"]', panel).hidden = false;
+      $('[data-role="count"]', panel).textContent =
+        `${result.data.sequences} sequence${result.data.sequences === 1 ? "" : "s"} screened`;
+      Object.keys(AUTODIMER_KINDS).forEach(renderSection);
+    }
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const screen = event.submitter?.value || "dimer";
       setStatus(panel, "");
       $('[data-role="table-actions"]', panel).hidden = true;
-      $('[data-role="table-wrap"]', panel).hidden = true;
-      await busy(event.submitter, async () => {
+      $$("[data-section]", panel).forEach((s) => (s.hidden = true));
+      const button = $("button[type=submit]", form);
+      await busy(button, async () => {
         try {
           const values = readForm(form);
           setStatus(panel, "Screening…", "busy");
-          const data = await api("/autodimer", { ...values, screen });
+          const data = await api("/autodimer", values);
           setStatus(panel, "");
-          if (!data.hits.length) noHits(screen, values.settings.min_score);
-          Object.assign(result, { data: { ...data, dg_temp_c: values.settings.dg_temp_c }, rows: data.hits, sort: null, screen });
+          result = {
+            data,
+            settings: values,
+            sections: {
+              dimers: { rows: data.dimers.hits, sort: null },
+              hairpins: { rows: data.hairpins.hits, sort: null },
+            },
+          };
           render();
         } catch (err) {
           setStatus(panel, err.message, "error");
@@ -828,22 +858,7 @@
       });
     });
 
-    // "Try a lower score" reruns the same screen one step lower; hairpin stems
-    // are short, so hairpins drop straight to 3.
-    function noHits(screen, score) {
-      const what = screen === "dimer" ? "primer-dimers" : "hairpins";
-      const lower = screen === "hairpin" ? Math.min(score - 1, 3) : score - 1;
-      $('[data-role="status"]', panel).innerHTML =
-        `<p class="msg">No ${what} found at score ${escapeHtml(score)}. <a href="#" data-action="lower-score">Try a lower score</a></p>`;
-      $('[data-action="lower-score"]', panel).addEventListener("click", (event) => {
-        event.preventDefault();
-        field(panel, "settings.min_score").value = lower;
-        save();
-        form.requestSubmit($(`button[type=submit][value="${screen}"]`, form));
-      });
-    }
-
-    // The buttons sit below a tall form, so bring the results (at the top of
+    // The button sits below a tall form, so bring the results (at the top of
     // their column, possibly under the sticky header) into view.
     function revealResults() {
       const box = $(".results", panel);
@@ -853,8 +868,9 @@
         window.scrollTo(0, Math.max(0, window.scrollY + top - header - 12));
       }
     }
+
     $('[data-action="save-text"]', panel).addEventListener("click", () => {
-      if (result.data) download(`autodimer_${result.screen}.txt`, result.data.text);
+      if (result) download("autodimer.txt", result.data.text);
     });
   }
 

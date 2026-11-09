@@ -292,3 +292,5 @@ dialog::backdrop { background: rgb(0 0 0 / .35); }
 .results-table.autodimer td.labels { white-space: normal; }
 .results-table.autodimer td.labels .vs { color: var(--muted); font-size: 11px; }
 .results-table.autodimer pre { margin: 0; }
+.autodimer-section h3 { margin: 4px 0 8px; }
+.autodimer-section h3 .muted { font-weight: 400; text-transform: none; letter-spacing: 0; }
