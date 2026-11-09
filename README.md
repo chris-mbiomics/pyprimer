@@ -25,6 +25,8 @@ produce identical results to the original (see [Testing](#testing)).
   entered boundaries, a genomic-sequence alignment, or Ensembl annotation.
 - **Sequencing**: a tiled set of primers at a chosen spacing.
 - **Ensembl** retrieval of cDNA, CDS or genomic sequence by gene name or ID.
+- **AutoDimer**: screen a whole multiplex set of oligos for primer-dimers and
+  hairpins, a port of NIST AutoDimer (see [AutoDimer](#autodimer)).
 - Text reports, TSV export, and one-click BLAST at NCBI.
 
 ## Installation
@@ -57,6 +59,13 @@ Quick analysis from the command line:
 .venv/bin/pyprimer analyse GAGAATGTGGGCTCTCAAGC GGCGTTAGTTTAAGTCACGG
 ```
 
+Screen a set of oligos (FASTA-style, `>label` lines) with AutoDimer:
+
+```bash
+.venv/bin/pyprimer autodimer primers.txt --score 7
+.venv/bin/pyprimer autodimer primers.txt --hairpin --score 3
+```
+
 ### As a library
 
 ```python
@@ -83,11 +92,12 @@ src/pyprimer/
   exons.py       mRNA-to-genome exon mapping (replaces Spidey)
   ensembl.py     Ensembl REST client
   report.py      primer analysis, sequence maps, text reports
+  autodimer.py   AutoDimer primer-dimer and hairpin screening of oligo sets
   cli.py         command-line entry point
   web/           Flask app factory, JSON API, template and static assets
   data/gcg.603   REBASE restriction enzyme database
-tests/           unit, API and PerlPrimer parity tests
-tools/           Perl harness generator used by the parity tests
+tests/           unit, API, PerlPrimer and NIST AutoDimer parity tests
+tools/           Perl harness generator and NIST AutoDimer fixture fetcher
 ```
 
 ## Development
@@ -108,6 +118,14 @@ PerlPrimer's algorithm subroutines into a headless harness
 
 ```bash
 PERLPRIMER_PL=perlprimer-1.1.21/perlprimer.pl .venv/bin/pytest tests/test_parity.py
+```
+
+`tests/test_autodimer_nist.py` replays results recorded from the NIST
+AutoDimer web service (`tests/data/autodimer_nist.json`) offline. To record
+them again (this sends only the script's synthetic test sequences to NIST):
+
+```bash
+.venv/bin/python tools/fetch_autodimer_nist.py > tests/data/autodimer_nist.json
 ```
 
 ## Differences from PerlPrimer
@@ -141,6 +159,45 @@ Not ported: the Contig Viewer TCP link, `.ppr` project files, local BLAST,
 and the *Find primers with cloning* range search. Preferences are stored
 per browser.
 
+## AutoDimer
+
+The AutoDimer tab is an addition; PerlPrimer had no equivalent. It ports
+AutoDimer (Vallone & Butler, *BioTechniques* 37:226–231, 2004), which screens
+sets of multiplex primers for primer-dimers and hairpins. The original Visual
+Basic program is distributed only as a compiled binary, so the algorithm was
+reconstructed from the paper and calibrated against the web version NIST hosts
+at [dnaanalysis.nist.gov](https://dnaanalysis.nist.gov/DNAAnalysis/primer-tools).
+
+- Each pair of different oligos is slid against each other, and each oligo is
+  folded with 4- and 5-base loops and stems of at least 2 bp. Score = Watson–Crick
+  matches − mismatches; alignments scoring at least the threshold are reported.
+- Tm and ΔG use SantaLucia (1998) unified nearest-neighbour parameters with
+  his empirical salt correction (Na⁺ only). Stacks are counted only between
+  adjacent matched pairs, and each mismatch adds 0.438 kcal/mol to ΔH. These
+  are rough estimates intended for ranking.
+
+Primer-dimer results (alignments, matches, scores, Tm and ΔG) match the NIST
+web service exactly, including some of its quirks:
+
+- Self-dimers are not screened.
+- For oligos of different lengths, overlaps are tried from both ends of the
+  shorter oligo. If the longer one is 4 or more bases longer, a few extra
+  shifts follow. These compare bases offset by one from where they are drawn.
+- Unknown bases (N, ambiguity codes) count as mismatches, and the mismatch
+  penalty is not applied to the last position of an alignment.
+
+Deliberate differences from the NIST service:
+
+- If the longer oligo is at least 2n + 3 bases (n = shorter length), NIST
+  reports an error. PyPrimer caps the extra shifts instead.
+- Lower-case bases are read as upper case. NIST never pairs them. U is read as T.
+- **Hairpin Tm and ΔG** follow the paper: stem duplex plus a 5.6 kcal/mol
+  (entropic) loop penalty, Tm = ΔH/ΔS. The values NIST reports for hairpins
+  could not be reproduced. Hairpin folds, matches and scores match NIST, except
+  where NIST sizes a stem wrongly next to ambiguity codes.
+- The paper's own example (Figure 3) gives Tm 7.5 °C and ΔG −2.42 kcal/mol for
+  the VB program, versus 4.0 °C and −1.89 kcal/mol here and on the NIST site.
+
 ## Licence and credits
 
 PyPrimer is free software under the GNU General Public License, version 2
@@ -148,6 +205,8 @@ or (at your option) any later version. See [LICENSE](LICENSE).
 
 - Original PerlPrimer © 2003-2011 Owen Marshall.
 - Restriction enzyme data from [REBASE](http://rebase.neb.com/).
+- AutoDimer: P. M. Vallone and J. M. Butler, National Institute of Standards
+  and Technology (NIST).
 - Marshall OJ. PerlPrimer: cross-platform, graphical primer design for
   standard, bisulphite and real-time PCR. *Bioinformatics* 2004
   20(15):2471-2472.

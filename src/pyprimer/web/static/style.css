@@ -285,3 +285,10 @@ dialog::backdrop { background: rgb(0 0 0 / .35); }
   .grid.two { grid-template-columns: minmax(0, 1fr); }
   .brand p { display: none; }
 }
+
+/* AutoDimer */
+.results-table.autodimer tbody tr { cursor: default; }
+.results-table.autodimer td { vertical-align: top; }
+.results-table.autodimer td.labels { white-space: normal; }
+.results-table.autodimer td.labels .vs { color: var(--muted); font-size: 11px; }
+.results-table.autodimer pre { margin: 0; }

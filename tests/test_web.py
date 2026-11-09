@@ -52,6 +52,7 @@ def test_defaults(client: FlaskClient) -> None:
     assert data["pcr"]["min_tm"] == 57
     assert data["pcr"]["repeats"] == {"enabled": True, "run": 4, "repeat": 3}
     assert data["conditions"]["oligo_nm"] == 200
+    assert data["autodimer"]["min_score"] == 7
 
 
 def test_features(client: FlaskClient, seq: str) -> None:
@@ -143,6 +144,37 @@ def test_analyse(client: FlaskClient) -> None:
     assert status == 200
     assert data["forward"]["tm"] == 61.23 and data["reverse"] is None
     assert post(client, "/analyse", {})[0] == 400
+
+
+def test_autodimer(client: FlaskClient) -> None:
+    oligos = ">F\nGTCAGCTAGTAGCTAGCGCA\n>R\nTGCGCTAGCTACTAGCTGAC\n"
+    body = {"sequences": oligos, "settings": {"min_score": 20}}
+    status, data = post(client, "/autodimer", body)
+    assert status == 200
+    assert data["comparisons"] == 1 and data["sequences"] == 2
+    assert [(h["label_1"], h["label_2"], h["score"]) for h in data["hits"]] == [("R", "F", 20)] * 2
+    assert data["hits"][0]["tm"] == pytest.approx(59.7, abs=0.05)
+    assert "Number of Hits = 2" in data["text"]
+
+    status, data = post(client, "/autodimer", {**body, "screen": "hairpin", "settings": {}})
+    assert status == 200 and data["comparisons"] == 2
+    assert all(h["loop"] in (4, 5) for h in data["hits"])
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ({"sequences": "ACGTACGT"}, "at least two"),
+        ({"sequences": ""}, "at least two"),
+        ({"sequences": "", "screen": "hairpin"}, "at least one"),
+        ({"sequences": "ACGT\nACGT", "screen": "bogus"}, "Unknown screen"),
+        ({"sequences": "ACGT\nACGT", "settings": {"sodium_m": 0}}, "greater than zero"),
+        ({"sequences": "ACGT\n" * 101}, "Too many"),
+    ],
+)
+def test_autodimer_errors(client: FlaskClient, body: dict[str, object], message: str) -> None:
+    status, data = post(client, "/autodimer", body)
+    assert status == 400 and message in data["error"]
 
 
 def test_enzymes(client: FlaskClient) -> None:

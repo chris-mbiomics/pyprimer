@@ -1,4 +1,4 @@
-"""Command-line entry point: ``pyprimer serve`` and quick primer analysis."""
+"""Command-line entry point: ``pyprimer serve``, quick primer analysis and AutoDimer."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import webbrowser
 from collections.abc import Sequence
 
 from . import __version__
+from .autodimer import AutoDimerSettings, parse_oligos, report_text, screen_dimers, screen_hairpins
 from .report import analyse_pair
 
 
@@ -31,9 +32,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     tm.add_argument("forward")
     tm.add_argument("reverse", nargs="?")
 
+    defaults = AutoDimerSettings()
+    ad = commands.add_parser(
+        "autodimer", help="screen a set of oligos for primer-dimers or hairpins (AutoDimer)"
+    )
+    ad.add_argument("file", help="text/FASTA file of oligos ('-' for standard input)")
+    ad.add_argument("--hairpin", action="store_true", help="screen for hairpins instead")
+    ad.add_argument(
+        "--score", type=int, default=defaults.min_score, help="minimum score (default: %(default)s)"
+    )
+    ad.add_argument(
+        "--na", type=float, default=defaults.sodium_m, help="Na+ in M (default: %(default)s)"
+    )
+    ad.add_argument(
+        "--ct",
+        type=float,
+        default=defaults.strand_um,
+        help="total strand concentration in uM (default: %(default)s)",
+    )
+    ad.add_argument(
+        "--dg-temp",
+        type=float,
+        default=defaults.dg_temp_c,
+        help="temperature for dG in C (default: %(default)s)",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "serve":
         return _serve(args.host, args.port, args.open, args.debug)
+    if args.command == "autodimer":
+        return _autodimer(args)
     return _analyse(args.forward, args.reverse)
 
 
@@ -71,6 +99,26 @@ def _analyse(forward: str, reverse: str | None) -> int:
     print()
     print(analysis.dimer_text())
     return 1 if analysis.errors else 0
+
+
+def _autodimer(args: argparse.Namespace) -> int:
+    try:
+        if args.file == "-":
+            text = sys.stdin.read()
+        else:
+            with open(args.file, encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        settings = AutoDimerSettings(args.na, args.ct, args.dg_temp, args.score)
+        oligos = parse_oligos(text)
+    except (OSError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if len(oligos) < (1 if args.hairpin else 2):
+        print("Error: not enough sequences to screen", file=sys.stderr)
+        return 1
+    screen = (screen_hairpins if args.hairpin else screen_dimers)(oligos, settings)
+    print(report_text(screen), end="")
+    return 0
 
 
 if __name__ == "__main__":

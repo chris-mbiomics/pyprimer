@@ -9,6 +9,13 @@ from flask import Blueprint, Response, current_app, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 from .. import ensembl
+from ..autodimer import (
+    AutoDimerSettings,
+    parse_oligos,
+    report_text,
+    screen_dimers,
+    screen_hairpins,
+)
 from ..cloning import (
     DEFAULT_ANCHOR,
     add_cloning_tails,
@@ -141,6 +148,13 @@ class ExonRequest:
     genomic: str
 
 
+@dataclass(frozen=True)
+class AutoDimerRequest:
+    sequences: str = ""
+    screen: str = "dimer"
+    settings: AutoDimerSettings = field(default_factory=AutoDimerSettings)
+
+
 # --------------------------------------------------------------------------
 # Error handling
 # --------------------------------------------------------------------------
@@ -207,6 +221,7 @@ def defaults() -> Response:
         sequencing=dump(SequencingSettings()),
         conditions=dump(Conditions()),
         cpg=dump(CpGSettings()),
+        autodimer=dump(AutoDimerSettings()),
         anchor=DEFAULT_ANCHOR,
     )
 
@@ -292,6 +307,29 @@ def analyse() -> Response:
     if not analysis.forward and not analysis.reverse and not analysis.errors:
         raise ApiError("Enter at least one primer sequence")
     return jsonify(_analysis_payload(analysis))
+
+
+@api.post("/autodimer")
+def autodimer() -> Response:
+    """AutoDimer primer-dimer or hairpin screen of a set of oligos."""
+    req = build(AutoDimerRequest, _payload())
+    if req.screen not in ("dimer", "hairpin"):
+        raise ApiError(f"Unknown screen: {req.screen}")
+    try:
+        oligos = parse_oligos(req.sequences)
+    except ValueError as exc:
+        raise ApiError(str(exc)) from exc
+    if req.screen == "dimer" and len(oligos) < 2:
+        raise ApiError("Enter at least two sequences for a primer-dimer screen")
+    if not oligos:
+        raise ApiError("Enter at least one sequence")
+    screen = (screen_dimers if req.screen == "dimer" else screen_hairpins)(oligos, req.settings)
+    return jsonify(
+        hits=dump(screen.hits),
+        comparisons=screen.comparisons,
+        sequences=len(oligos),
+        text=report_text(screen),
+    )
 
 
 @api.post("/details")

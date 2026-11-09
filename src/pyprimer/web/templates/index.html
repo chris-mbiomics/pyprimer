@@ -96,6 +96,7 @@
     <button role="tab" data-tab="qpcr" aria-selected="false">Real-time PCR</button>
     <button role="tab" data-tab="sequencing" aria-selected="false">Sequencing</button>
     <button role="tab" data-tab="analyse" aria-selected="false">Primer analysis</button>
+    <button role="tab" data-tab="autodimer" aria-selected="false">AutoDimer</button>
     <button role="tab" data-tab="prefs" aria-selected="false">Preferences</button>
   </nav>
 </header>
@@ -227,6 +228,47 @@
     </section>
   </section>
 
+  <!-- AutoDimer -->
+  <section class="panel" id="tab-autodimer" data-mode="autodimer" role="tabpanel" hidden>
+    <form class="inputs" novalidate>
+      <div class="seq-box">
+        <div class="seq-head">
+          <span class="label">Oligos (5′→3′)</span>
+          <span class="seq-len" data-role="oligo-count">0 sequences</span>
+        </div>
+        <textarea data-path="sequences" rows="12" spellcheck="false" autocomplete="off" aria-label="Oligos"
+          placeholder="&gt;Forward 1&#10;GTCAGCTAGTAGCTAGCGCA&#10;&gt;Reverse 1&#10;TGCGCTAGCTACTAGCTGAC&#10;…"></textarea>
+        <div class="toolbar">
+          <label class="btn ghost small file-btn">Open file…<input type="file" accept=".txt,.fa,.fasta,.fas" data-load-into="sequences" hidden></label>
+        </div>
+      </div>
+      <fieldset class="card">
+        <legend>Screening</legend>
+        <p class="help">Every pair of oligos is slid against each other, and each oligo is folded with 4 or 5 base loops. Score = Watson–Crick matches − mismatches; Tm and ΔG are rough nearest-neighbour estimates (SantaLucia 1998). After AutoDimer by Vallone &amp; Butler (NIST).</p>
+        <div class="grid">
+          {{ num("settings.min_score", "Minimum score", "1", hint="Report interactions scoring at least this; 7–8 suits multiplex PCR primers") }}
+          {{ num("settings.sodium_m", "Na⁺ (M)", "any", 0) }}
+          {{ num("settings.strand_um", "Total strand (µM)", "any", 0) }}
+          {{ num("settings.dg_temp_c", "ΔG at (°C)", "any") }}
+        </div>
+      </fieldset>
+      <div class="row">
+        <button type="submit" class="btn primary" value="dimer">Primer-dimer screen</button>
+        <button type="submit" class="btn" value="hairpin">Hairpin screen</button>
+        <button type="button" class="btn ghost small" data-action="autodimer-defaults">Restore defaults</button>
+      </div>
+    </form>
+    <section class="results" aria-live="polite">
+      <div class="status" data-role="status"></div>
+      <div class="table-actions" data-role="table-actions" hidden>
+        <span data-role="count"></span>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost small" data-action="save-text">Save results (text)</button>
+      </div>
+      <div class="table-wrap" data-role="table-wrap" hidden><table class="results-table autodimer" data-role="table"></table></div>
+    </section>
+  </section>
+
   <!-- Preferences -->
   <section class="panel prefs" id="tab-prefs" data-mode="prefs" role="tabpanel" hidden>
     <form class="inputs wide" novalidate>
@@ -278,7 +320,7 @@
 </main>
 
 <footer class="footer">
-  PyPrimer {{ version }} · Python port of PerlPrimer 1.1.21 by Owen Marshall · GNU GPL v2 or later · Restriction enzyme data from REBASE
+  PyPrimer {{ version }} · Python port of PerlPrimer 1.1.21 by Owen Marshall · AutoDimer after Vallone &amp; Butler (NIST) · GNU GPL v2 or later · Restriction enzyme data from REBASE
 </footer>
 
 <dialog id="ensembl-dialog" aria-labelledby="ensembl-title">
